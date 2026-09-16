@@ -47,7 +47,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node .claude/hooks/block-dangerous.js"
+            "command": "node .claude/hooks/block-dangerous.cjs"
           }
         ]
       },
@@ -56,7 +56,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node .claude/hooks/circuit-breaker.js"
+            "command": "node .claude/hooks/circuit-breaker.cjs"
           }
         ]
       }
@@ -67,11 +67,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node .claude/hooks/typecheck.js"
+            "command": "node .claude/hooks/typecheck.cjs"
           },
           {
             "type": "command",
-            "command": "node .claude/hooks/track-test-failure.js"
+            "command": "node .claude/hooks/track-test-failure.cjs"
           }
         ]
       }
