@@ -1,0 +1,80 @@
+{
+  "permissions": {
+    "defaultMode": "default",
+    "blockReadsOutsideWorkingDirectories": true,
+    "allow": [
+      "Bash(npm run test*)",
+      "Bash(npm run lint*)",
+      "Bash(npm test*)",
+      "Bash(npx tsc*)",
+      "Bash(git status)",
+      "Bash(git diff*)",
+      "Bash(git add*)",
+      "Bash(git commit*)",
+      "Read(./**)"
+    ],
+    "ask": [
+      "Bash(git push*)",
+      "Bash(npm install*)",
+      "Bash(npm uninstall*)"
+    ],
+    "deny": [
+      "Bash(rm -rf*)",
+      "Bash(curl*)",
+      "Bash(wget*)",
+      "Bash(git push*--force*)",
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)"
+    ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "filesystem": {
+      "denyRead": ["~/"],
+      "allowRead": ["."]
+    },
+    "network": {
+      "allowedDomains": ["registry.npmjs.org", "*.npmjs.org"]
+    }
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/block-dangerous.js"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/circuit-breaker.js"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/typecheck.js"
+          },
+          {
+            "type": "command",
+            "command": "node .claude/hooks/track-test-failure.js"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,37 @@
+# 依賴目錄
+node_modules/
+
+# 建置產物
+dist/
+build/
+.vite/
+
+# 測試覆蓋率報告
+coverage/
+
+# 環境與本機設定
+.env
+.env.local
+*.local
+
+# 編輯器與作業系統雜訊
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 日誌
+*.log
+npm-debug.log*
+
+# 鎖定檔以外的套件管理暫存
+.npm/
+.cache/
+
+# 大型二進位或不需 CLI 讀取的媒體資源（如有）
+*.png
+*.jpg
+*.jpeg
+*.ico
+*.woff
+*.woff2

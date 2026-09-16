@@ -1,0 +1,15 @@
+使用方式
+
+把這個檔案放到專案的 .claude/commands/gen-types.md，檔名（去掉 .md）就是指令名稱，之後在 Claude Code CLI 對話中直接輸入即可觸發 。
+
+基本用法：
+
+/gen-types
+
+不帶參數時，指令會自動去 specs/ 目錄找唯一的規格檔案。
+
+指定路徑用法（若專案有多份規格檔案時）：
+
+/gen-types specs/password_manager_spec.md
+
+路徑會透過 $ARGUMENTS 帶入指令內容 。
