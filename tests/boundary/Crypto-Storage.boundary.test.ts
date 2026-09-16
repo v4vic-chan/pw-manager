@@ -1,6 +1,12 @@
 import { describe, test, expect } from "vitest";
 import type { StoredEntryRecord } from "../../src/types/StoredEntryRecord";
-import type { SecurityConfig } from "../../src/types/SecurityConfig";
+import type { KdfParams, SecurityConfig } from "../../src/types/SecurityConfig";
+import {
+  generateSalt,
+  deriveKeys,
+  encryptPayload,
+  decryptPayload,
+} from "../../src/crypto/crypto";
 import {
   isStoredEntryRecordShape,
   isSecurityConfigShape,
@@ -11,9 +17,8 @@ import {
  * 對應規格 §2.2 分層架構、§2.3 資料流向硬性約束、§3.1 EncryptedPayload、
  * §3.4 StoredEntryRecord、§3.6 SecurityConfig、§5.1.2 資料加密。
  *
- * 此邊界涉及加密層，依規則需包含加解密往返相關驗證；但「落地資料不得為明文」
- * 這項約束（§2.3）需要真正的加密輸出才能比對，目前 Crypto 層尚無實作，
- * 依使用者指示先標記為 skip。
+ * 此邊界涉及加密層，依規則需包含加解密往返相關驗證；「落地資料不得為明文」
+ * 這項約束（§2.3）以 Crypto 層（src/crypto/crypto.ts）的真實加密輸出比對。
  */
 
 const storedRecord: StoredEntryRecord = {
@@ -72,13 +77,20 @@ describe("Crypto-Storage boundary: 型態一致性", () => {
 });
 
 describe("Crypto-Storage boundary: 明文不得落地（§2.3）", () => {
-  test.skip(
-    "落地儲存的 password 密文不得與原始明文相同（待 Crypto 層實作後以真實加密輸出比對）",
-    async () => {
-      // const plaintext = "correct horse battery staple";
-      // const encrypted = await encrypt(plaintext, key);
-      // expect(encrypted.ciphertext).not.toBe(plaintext);
-      expect(true).toBe(true);
-    }
-  );
+  test("落地儲存的 password 密文不得與原始明文相同，且以真實加密輸出組成的 StoredEntryRecord 符合契約", async () => {
+    const kdfParams: KdfParams = { memoryKiB: 19456, iterations: 2, parallelism: 1 };
+    const key = await deriveKeys("correct horse battery", await generateSalt(), kdfParams);
+    const plaintext = "correct horse battery staple";
+    const encrypted = await encryptPayload(plaintext, key, 1);
+
+    const record: StoredEntryRecord = { ...storedRecord, password: encrypted };
+    expect(isStoredEntryRecordShape(record)).toBe(true);
+
+    const serialized = JSON.stringify(record);
+    expect(encrypted.ciphertext).not.toBe(plaintext);
+    expect(serialized).not.toContain(plaintext);
+    expect(serialized).not.toContain(btoa(plaintext));
+
+    await expect(decryptPayload(record.password, key)).resolves.toBe(plaintext);
+  });
 });

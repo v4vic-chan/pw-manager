@@ -10,11 +10,11 @@
       "Bash(git status)",
       "Bash(git diff*)",
       "Bash(git add*)",
-      "Bash(git commit*)",
       "Read(./**)"
     ],
     "ask": [
       "Bash(git push*)",
+      "Bash(git commit*)",
       "Bash(npm install*)",
       "Bash(npm uninstall*)"
     ],
