@@ -1,8 +1,7 @@
 {
-  "updatedAt": "2026-09-16T17:35:31.005Z",
+  "updatedAt": "2026-09-16T17:59:20.242Z",
   "failureIds": [
     "E:/Web Project/password-keeper/tests/unit/2FA模組.test.ts::__suite__",
-    "E:/Web Project/password-keeper/tests/unit/主密碼登入模組.test.ts::__suite__",
     "E:/Web Project/password-keeper/tests/unit/分類管理模組.test.ts::__suite__",
     "E:/Web Project/password-keeper/tests/unit/搜尋排序篩選模組.test.ts::__suite__",
     "E:/Web Project/password-keeper/tests/unit/條目CRUD模組.test.ts::__suite__"

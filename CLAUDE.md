@@ -45,6 +45,16 @@ React + TypeScript + Vite + Vitest + IndexedDB（`idb`）+ libsodium.js（Argon2
 - 禁止引入規格 §1.2「非目標」明確排除的功能（跨裝置同步、瀏覽器自動填表、多用戶、雲端備份）。
 - 禁止繞過 PostToolUse hook 手動停用型態檢查。
 
+## 已知限制（Hooks / 執行環境）
+- PreToolUse hook 若要真正攔截工具呼叫，須以 stdout 輸出
+  `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"..."}}`
+  並以 exit 0 結束；單純 `process.exit(2)` 在目前這個執行環境下已驗證**不可靠**（`circuit-breaker.cjs`
+  與 `block-dangerous.cjs` 皆已改用前者）。新增 PreToolUse hook 時務必比照辦理。
+- `block-dangerous.cjs` 的 matcher 目前設為 `"Bash|PowerShell"`，因為本機是 Windows，Shell
+  指令呼叫的 tool_name 是 `PowerShell` 而非 `Bash`。若未來改在 WSL 或 CI（Linux shell）環境執行，
+  該環境下的 tool_name 可能又不同，需要重新確認實際 tool_name 並補進 matcher，否則這支 hook
+  會對該環境的 shell 呼叫完全不觸發（此點尚未在 WSL/CI 環境下實測過，僅為已知風險提醒）。
+
 ## Git 與 Context 治理
 - 每完成一個模組並通過對應 Gate（型態檢查 + 測試）後，執行一次原子化 commit。
 - 完成一個獨立任務後執行 `/clear`，避免 context 累積影響後續任務精準度。
