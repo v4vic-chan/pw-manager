@@ -28,8 +28,14 @@ const readInput = () => new Promise((resolve) => {
   ];
 
   if (dangerousPatterns.some((p) => p.test(command))) {
-    process.stderr.write('Blocked: 偵測到高風險指令，已攔截，請確認後手動執行。\n');
-    process.exit(2);
+    console.log(JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: 'Blocked: 偵測到高風險指令，已攔截，請確認後手動執行。',
+      },
+    }));
+    process.exit(0);
   }
   process.exit(0);
 })();

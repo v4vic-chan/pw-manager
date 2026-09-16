@@ -9,12 +9,18 @@ const stateFile = path.join(projectDir, '.claude', 'state', 'fix-attempts.count'
 if (fs.existsSync(stateFile)) {
   const count = parseInt(fs.readFileSync(stateFile, 'utf8').trim() || '0', 10);
   if (count >= THRESHOLD) {
-    process.stderr.write(
+    const reason =
       `熔斷觸發：同一任務已連續 ${count} 次修補未通過測試，已強制中斷。` +
       `請人工介入，或指示升級至更強模型（Opus/Fable）處理此模組後，` +
-      `執行 node .claude/hooks/reset-counter.cjs 重置計數。\n`
-    );
-    process.exit(2);
+      `執行 node .claude/hooks/reset-counter.cjs 重置計數並更新基準失敗清單。`;
+    console.log(JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: reason,
+      },
+    }));
+    process.exit(0);
   }
 }
 process.exit(0);
