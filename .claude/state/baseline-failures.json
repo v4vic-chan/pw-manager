@@ -1,7 +1,6 @@
 {
-  "updatedAt": "2026-09-17T20:00:12.195Z",
+  "updatedAt": "2026-09-17T20:30:20.931Z",
   "failureIds": [
-    "E:/Web Project/password-keeper/tests/unit/搜尋排序篩選模組.test.ts::__suite__",
-    "E:/Web Project/password-keeper/tests/unit/條目CRUD模組.test.ts::__suite__"
+    "E:/Web Project/password-keeper/tests/unit/搜尋排序篩選模組.test.ts::__suite__"
   ]
 }

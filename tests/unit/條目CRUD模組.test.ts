@@ -75,6 +75,20 @@ describe("updateEntry：編輯條目，允許修改任一欄位並更新 updated
     expect(updated.id).toBe(original.id);
     expect(updated.updatedAt).not.toBe(original.updatedAt);
   });
+
+  test("邊界：changes 內欄位值與原值完全相同時，非真實變更，updatedAt 不應改變", async () => {
+    const original = createEntry(validInput, categories);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const updated = updateEntry(original, {
+      appName: original.appName,
+      categoryId: original.categoryId,
+      accountId: original.accountId,
+      password: original.password,
+    });
+
+    expect(updated).toEqual(original);
+    expect(updated.updatedAt).toBe(original.updatedAt);
+  });
 });
 
 describe("deleteEntry：刪除需二次確認，為硬刪除（§4.4）", () => {
