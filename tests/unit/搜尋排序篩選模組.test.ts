@@ -1,5 +1,6 @@
 import { describe, test, expect } from "vitest";
 import { searchEntries, filterByCategories, sortEntries } from "../../src/services/search";
+import type { Category } from "../../src/types/Category";
 import type { Entry } from "../../src/types/Entry";
 
 /**
@@ -90,12 +91,20 @@ describe("sortEntries：至少支援四種排序鍵與正倒序（§4.5）", () 
     expect(result.map((e: Entry) => e.id)).toEqual(["e3", "e1", "e2"]);
   });
 
-  // TODO（語意變更，待後續輪次處理）：v1.6 §4.5 規定此排序鍵為 Category.name
-  // （依分類名稱字母序，非依 categoryId），需傳入分類清單才能排序；
-  // 以下排序鍵名稱與預期結果沿用 v1.2 的 categoryId 比對語意，本輪僅做欄位改名。
-  test("邊界：依 category 排序", () => {
-    const result = sortEntries(entries, "category", "asc");
-    expect(result.map((e: Entry) => e.categoryId)).toEqual(["c1", "c1", "c2"]);
+  // v1.6 §4.5：此排序鍵依 Category.name 字母序（非 categoryId），需傳入分類清單查找名稱。
+  const categoriesForSort: Category[] = [
+    { id: "c1", name: "Zeta", sortIndex: 0, isSystemDefault: false, createdAt: "2026-09-14T00:00:00.000Z" },
+    { id: "c2", name: "Alpha", sortIndex: 1, isSystemDefault: false, createdAt: "2026-09-14T00:00:00.000Z" },
+  ];
+
+  test("邊界：依 category（Category.name）正序排序", () => {
+    const result = sortEntries(entries, "category", "asc", categoriesForSort);
+    // c2="Alpha" < c1="Zeta"；同為 c1 的 e1/e3 以 id 次要排序（"e1" < "e3"）
+    expect(result.map((e: Entry) => e.id)).toEqual(["e2", "e1", "e3"]);
+  });
+
+  test("異常路徑：key=\"category\" 但未提供 categories 應拋錯", () => {
+    expect(() => sortEntries(entries, "category", "asc")).toThrow();
   });
 });
 
