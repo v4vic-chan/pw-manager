@@ -34,16 +34,21 @@ export type MasterPasswordVerification =
   | { ok: true; encryptionKey: CryptoKey }
   | { ok: false; reason: "INVALID_MASTER_PASSWORD" };
 
-/** §4.1 首次設定：組出初始 SecurityConfig（keyGeneration = 1、2FA 關閉、失敗計數歸零） */
-export async function setMasterPassword(
-  password: string,
-  kdfParams: KdfParams = DEFAULT_KDF_PARAMS
-): Promise<SecurityConfig> {
+/** §4.1、AC11：首次設定與變更主密碼共用的長度規則 */
+export function assertValidMasterPassword(password: string): void {
   if (password.length < MIN_MASTER_PASSWORD_LENGTH) {
     throw new RangeError(
       `主密碼長度須 ≥ ${MIN_MASTER_PASSWORD_LENGTH} 字元（§4.1），實際為 ${password.length}`
     );
   }
+}
+
+/** §4.1 首次設定：組出初始 SecurityConfig（keyGeneration = 1、2FA 關閉、失敗計數歸零） */
+export async function setMasterPassword(
+  password: string,
+  kdfParams: KdfParams = DEFAULT_KDF_PARAMS
+): Promise<SecurityConfig> {
+  assertValidMasterPassword(password);
 
   const masterPasswordSalt = await generateSalt();
   const encryptionKey = await deriveKeys(password, masterPasswordSalt, kdfParams);
