@@ -23,7 +23,7 @@ import * as twoFactor from "./twoFactor";
  * Service Layer 持久化編排：呼叫純函式模組取得新狀態 → 於開啟交易前完成全部加密運算 →
  * 經 src/storage/db.ts 以單一交易寫入並確認提交 → 才更新 session 或回傳結果。
  * session（encryptionKey、keyGeneration 快照）與 §4.1.1 寫入鎖定旗標僅存在於本實例記憶體。
- * 本輪範圍外：匯入／匯出（§5.3）、閒置計時（§5.1.4）、§4.1.3 自動升級觸發。
+ * 本輪範圍外：匯入／匯出（§5.3）、§4.1.3 自動升級觸發。
  */
 
 export type StorageErrorCode = "REKEY_IN_PROGRESS" | "KEY_GENERATION_MISMATCH" | "NOT_AUTHENTICATED";
@@ -127,7 +127,13 @@ function recordFailure(field: "loginFailureState" | "totpFailureState", now: Dat
   };
 }
 
-export async function createStorage(options: { dbName?: string } = {}): Promise<VaultStorage> {
+export interface StorageOptions {
+  dbName?: string;
+  /** §4.1.1 步驟 1、5：重新金鑰化期間暫停閒置計時（傳入 createIdleTimer 的實例），結束後恢復 */
+  idleTimer?: { pause(): () => void };
+}
+
+export async function createStorage(options: StorageOptions = {}): Promise<VaultStorage> {
   const db: VaultDB = await openVaultDB(options.dbName);
 
   let session: Session | null = null;
@@ -526,6 +532,7 @@ export async function createStorage(options: { dbName?: string } = {}): Promise<
       masterPassword.assertValidMasterPassword(newPassword);
 
       rekeyInProgress = true;
+      const releaseIdleTimer = options.idleTimer?.pause();
       try {
         await Promise.allSettled([...inFlightWrites]);
 
@@ -570,6 +577,7 @@ export async function createStorage(options: { dbName?: string } = {}): Promise<
         }
       } finally {
         rekeyInProgress = false;
+        releaseIdleTimer?.();
       }
     },
   };

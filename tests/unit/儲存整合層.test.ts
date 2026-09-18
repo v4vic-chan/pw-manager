@@ -10,6 +10,7 @@ import {
   writeUnguarded,
 } from "../../src/storage/db";
 import { UNCATEGORIZED_CATEGORY_ID } from "../../src/services/category";
+import { createIdleTimer } from "../../src/services/idleTimer";
 import type { TwoFactorSetup } from "../../src/services/twoFactor";
 
 /**
@@ -433,6 +434,53 @@ describe("2FA 開啟／關閉（§4.2、AC3、AC7）", () => {
     expect(config?.twoFactorEnabled).toBe(false);
     expect(config?.twoFactorSecretEncrypted).toBeUndefined();
     expect(config?.recoveryCodes).toBeUndefined();
+    storage.close();
+  });
+});
+
+describe("閒置計時整合（§4.1.1 步驟 1、5；§5.1.4；AC14）", () => {
+  async function setupWithIdleTimer() {
+    const onTimeout = vi.fn();
+    const idleTimer = createIdleTimer({ onTimeout });
+    const dbName = newDbName();
+    const storage = await createStorage({ dbName, idleTimer });
+    await storage.initialize(PASSWORD);
+    await storage.login(PASSWORD);
+    idleTimer.start();
+    return { storage, idleTimer, dbName };
+  }
+
+  test("重新金鑰化於設定寫入鎖定旗標的同時暫停閒置計時，提交成功後恢復", async () => {
+    const { storage, idleTimer } = await setupWithIdleTimer();
+
+    const rekeying = storage.changeMasterPassword(NEW_PASSWORD);
+    expect(idleTimer.isPaused()).toBe(true);
+    // 重複觸發被 REKEY_IN_PROGRESS 拒絕，不得提前解除暫停
+    await expect(storage.changeMasterPassword(NEW_PASSWORD)).rejects.toMatchObject({ code: "REKEY_IN_PROGRESS" });
+    expect(idleTimer.isPaused()).toBe(true);
+
+    await rekeying;
+    expect(idleTimer.isPaused()).toBe(false);
+    expect(idleTimer.isRunning()).toBe(true);
+    idleTimer.stop();
+    storage.close();
+  });
+
+  test("重新金鑰化失敗時同樣恢復閒置計時；在鎖定旗標設定前即被拒絕的呼叫不暫停", async () => {
+    const { storage, idleTimer } = await setupWithIdleTimer();
+
+    await expect(storage.changeMasterPassword("short")).rejects.toThrow(RangeError);
+    expect(idleTimer.isPaused()).toBe(false);
+
+    failNthPut(1);
+    const rekeying = storage.changeMasterPassword(NEW_PASSWORD);
+    expect(idleTimer.isPaused()).toBe(true);
+    await expect(rekeying).rejects.toThrow("injected write failure");
+    vi.restoreAllMocks();
+
+    expect(idleTimer.isPaused()).toBe(false);
+    expect(idleTimer.isRunning()).toBe(true);
+    idleTimer.stop();
     storage.close();
   });
 });
