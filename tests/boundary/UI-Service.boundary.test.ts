@@ -1,4 +1,6 @@
+import "fake-indexeddb/auto";
 import { describe, test, expect } from "vitest";
+import { createStorage } from "../../src/services/storage";
 import type { Entry } from "../../src/types/Entry";
 import type { Category } from "../../src/types/Category";
 import { isEntryShape, isCategoryShape } from "./_shared/shapeGuards";
@@ -130,24 +132,22 @@ describe("UI-Service boundary: 登入前匯入確認字串（§5.3、§6 #16）"
   });
 
   /**
-   * 跳過原因：§5.3 要求 Service Layer 的登入前匯入入口自行驗證確認字串
-   * （不得僅依賴 UI 按鈕 disabled 狀態），但 `src/services/` 下尚無匯入模組
-   * 可供呼叫，無法驗證其實際拒絕行為。
-   * 解除條件：Service Layer 登入前匯入入口實作完成後，移除 skip 並改為呼叫
-   * 真正的 Service 函式，驗證字串不符時被拒絕且不進入檔案選擇流程。
+   * §5.3：Service Layer 的登入前匯入入口須自行驗證確認字串，不得僅依賴 UI 按鈕狀態。
+   * 未取得 startPreLoginImport 發出的許可時，匯入入口一律拒絕（不得進入檔案處理流程）。
    */
-  test.skip(
-    "Service Layer 自行驗證：繞過 UI 直接呼叫且字串不符時，須被拒絕（待 Service Layer 匯入模組實作）",
-    async () => {
-      // 待 Service Layer 匯入入口（§5.3）實作完成後改為：
-      //
-      // await expect(
-      //   startPreLoginImport({ confirmation: "overwrite" })
-      // ).rejects.toThrow();
-      //
-      // 並驗證：字串不符時不得進入檔案選擇流程（未觸發檔案選擇回呼）；
-      // 輸入 "OVERWRITE" 時才得以進入後續流程。
-      expect(true).toBe(true);
+  test("Service Layer 自行驗證：繞過 UI 直接呼叫且字串不符時須被拒絕；未取得許可不得進入後續匯入流程", async () => {
+    const storage = await createStorage({ dbName: `boundary-import-${crypto.randomUUID()}` });
+
+    for (const confirmation of ["overwrite", " OVERWRITE", "OVERWRITE ", ""]) {
+      await expect(storage.startPreLoginImport({ confirmation })).rejects.toMatchObject({
+        code: "CONFIRMATION_MISMATCH",
+      });
     }
-  );
+    await expect(storage.importVault({ fileContent: "{}", password: "irrelevant" })).rejects.toMatchObject({
+      code: "CONFIRMATION_REQUIRED",
+    });
+
+    await expect(storage.startPreLoginImport({ confirmation: IMPORT_CONFIRMATION })).resolves.toBeDefined();
+    storage.close();
+  });
 });

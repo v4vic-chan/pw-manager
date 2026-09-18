@@ -1,4 +1,11 @@
-import { decryptPayload, encryptPayload, rekey } from "../crypto/crypto";
+import {
+  CryptoError,
+  decryptPayload,
+  deriveKeys,
+  encryptPayload,
+  rekey,
+  verifyCanaryPayload,
+} from "../crypto/crypto";
 import {
   openVaultDB,
   readAllCategories,
@@ -12,10 +19,23 @@ import {
 } from "../storage/db";
 import type { Category } from "../types/Category";
 import type { Entry } from "../types/Entry";
+import type { ExportFile } from "../types/ExportFile";
 import type { FailureState, KdfParams, SecurityConfig } from "../types/SecurityConfig";
 import type { StoredEntryRecord } from "../types/StoredEntryRecord";
 import * as categoryService from "./category";
 import * as entryService from "./entry";
+import {
+  EXPORT_FORMAT_VERSION,
+  ImportError,
+  PRE_LOGIN_IMPORT_CONFIRMATION,
+  buildExportBody,
+  buildExportHeader,
+  buildImportedSecurityConfig,
+  isImportConfirmationValid,
+  parseExportBody,
+  parseExportFile,
+  type ExportBody,
+} from "./importExport";
 import * as masterPassword from "./masterPassword";
 import * as twoFactor from "./twoFactor";
 
@@ -99,6 +119,21 @@ export interface VaultStorage {
 
   /** §4.1.2：以 §4.1.1 共用程序重新金鑰化 */
   changeMasterPassword(newPassword: string): Promise<void>;
+
+  /** §5.3 匯出：須已登入；回傳 §3.2 ExportFile（明文 header + 以 session 金鑰加密的本體），不含任何明文秘密 */
+  exportVault(): Promise<ExportFile>;
+  /** §5.3 登入頁匯入入口：確認字串須與 "OVERWRITE" 嚴格相等，通過才發出匯入許可 */
+  startPreLoginImport(input: { confirmation: string }): Promise<PreLoginImportTicket>;
+  /**
+   * §5.3 匯入（整份覆蓋）：已登入時直接執行並受 §5.1.5 檢查；未登入時須帶 startPreLoginImport 發出的許可。
+   * 全部驗證於寫入前完成，再以單一交易寫入；提交後清除 session，須以備份當時的主密碼重新登入。
+   */
+  importVault(input: { fileContent: string; password: string; ticket?: PreLoginImportTicket }): Promise<void>;
+}
+
+/** §5.3 登入頁匯入許可：僅由發出它的 storage 實例接受，匯入成功後失效 */
+export interface PreLoginImportTicket {
+  readonly kind: "pre-login-import";
 }
 
 interface Session {
@@ -113,6 +148,9 @@ const NO_FAILURES: FailureState = { failedAttempts: 0, lockedUntil: null };
 
 /** §3.5：系統初始化自動建立的預設分類名稱 */
 const UNCATEGORIZED_NAME = "未分類";
+
+/** §5.3 步驟 3：密碼錯誤與檔案損毀無法區分，提示須同時涵蓋兩者 */
+const IMPORT_DECRYPTION_FAILED_MESSAGE = "匯入失敗：備份檔當時的主密碼錯誤，或檔案已損毀（兩者無法區分）";
 
 function lockedResult(waitSeconds: number): LockedResult {
   return { ok: false, reason: "LOCKED", waitSeconds };
@@ -249,7 +287,135 @@ export async function createStorage(options: StorageOptions = {}): Promise<Vault
     return { ok: true };
   }
 
+  const issuedImportTickets = new WeakSet<PreLoginImportTicket>();
+
+  /**
+   * §5.3 步驟 1–5，全部於開啟交易前完成：解析與版本檢查 → 以備份當時主密碼與 header 參數衍生金鑰 →
+   * 解密本體即驗證密碼 → §3 契約驗證 → canary 比對 → 逐筆確認條目與 TOTP 秘鑰可解密（明文不保留）。
+   */
+  async function decodeImportFile(fileContent: string, password: string): Promise<{ file: ExportFile; body: ExportBody }> {
+    const file = parseExportFile(fileContent);
+
+    let key: CryptoKey;
+    try {
+      key = await deriveKeys(password, file.header.masterPasswordSalt, file.header.kdfParams);
+    } catch (error) {
+      if (error instanceof RangeError) {
+        throw new ImportError("INVALID_FORMAT", `備份檔的金鑰衍生參數無效：${error.message}`);
+      }
+      throw error;
+    }
+
+    let bodyJson: string;
+    try {
+      bodyJson = await decryptPayload(file.encryptedBody, key);
+    } catch (error) {
+      if (error instanceof CryptoError) throw new ImportError("DECRYPTION_FAILED", IMPORT_DECRYPTION_FAILED_MESSAGE);
+      throw error;
+    }
+
+    const body = parseExportBody(bodyJson, file.header.cryptoVersion);
+    if (!(await verifyCanaryPayload(body.securityConfig.canaryPayload, key))) {
+      throw new ImportError("DECRYPTION_FAILED", IMPORT_DECRYPTION_FAILED_MESSAGE);
+    }
+
+    const secrets = body.entries.map((entry) => entry.password);
+    if (body.securityConfig.twoFactorSecretEncrypted !== undefined) {
+      secrets.push(body.securityConfig.twoFactorSecretEncrypted);
+    }
+    for (const payload of secrets) {
+      try {
+        await decryptPayload(payload, key);
+      } catch (error) {
+        if (error instanceof CryptoError) {
+          throw new ImportError("INVALID_CONTENT", "備份檔中有無法以該主密碼解密的資料，檔案可能已損毀");
+        }
+        throw error;
+      }
+    }
+    return { file, body };
+  }
+
+  /** §5.3 步驟 6：整份覆蓋於單一交易內完成（清空 → 寫入全部匯入資料 → 取代 SecurityConfig） */
+  function importWritePlan(file: ExportFile, body: ExportBody): WritePlan {
+    return {
+      replaceSecurityConfig: (current) =>
+        buildImportedSecurityConfig(file.header, body.securityConfig, current?.keyGeneration),
+      clearEntries: true,
+      clearCategories: true,
+      putCategories: body.categories,
+      putEntries: body.entries,
+    };
+  }
+
   return {
+    exportVault() {
+      return startWrite(async (current) => {
+        const snapshot = await readVaultSnapshot(db);
+        const categories = await readAllCategories(db);
+        const config = snapshot.securityConfig;
+        if (config === undefined) throw new Error("保險庫尚未初始化");
+        // header 的 salt／kdfParams 須對應 session 金鑰，否則產生的備份無法解密
+        if (config.keyGeneration !== current.keyGeneration) {
+          clearSession();
+          throw new StorageError(
+            "KEY_GENERATION_MISMATCH",
+            "金鑰世代與 session 快照不符，無法以目前金鑰匯出，請重新登入（§5.1.5）"
+          );
+        }
+
+        const bodyJson = JSON.stringify(buildExportBody(snapshot.entries, categories, config));
+        try {
+          parseExportBody(bodyJson, config.cryptoVersion);
+        } catch (error) {
+          if (error instanceof ImportError) throw new Error(`匯出內容自檢未通過，請重試：${error.message}`);
+          throw error;
+        }
+
+        return {
+          formatVersion: EXPORT_FORMAT_VERSION,
+          header: buildExportHeader(config),
+          encryptedBody: await encryptPayload(bodyJson, current.encryptionKey, config.cryptoVersion),
+        };
+      });
+    },
+
+    async startPreLoginImport({ confirmation }) {
+      if (!isImportConfirmationValid(confirmation)) {
+        throw new ImportError(
+          "CONFIRMATION_MISMATCH",
+          `須輸入 "${PRE_LOGIN_IMPORT_CONFIRMATION}"（大小寫須完全相符）才可繼續匯入（§5.3）`
+        );
+      }
+      const ticket: PreLoginImportTicket = Object.freeze({ kind: "pre-login-import" });
+      issuedImportTickets.add(ticket);
+      return ticket;
+    },
+
+    importVault({ fileContent, password, ticket }) {
+      if (session !== null) {
+        return startWrite(async (current) => {
+          const { file, body } = await decodeImportFile(fileContent, password);
+          await commitGuarded(current, importWritePlan(file, body));
+          clearSession();
+        });
+      }
+
+      return (async () => {
+        if (rekeyInProgress) {
+          throw new StorageError("REKEY_IN_PROGRESS", "重新金鑰化進行中，匯入暫停（§4.1.1）");
+        }
+        if (ticket === undefined || !issuedImportTickets.has(ticket)) {
+          throw new ImportError("CONFIRMATION_REQUIRED", "登入頁匯入須先通過確認字串（§5.3）");
+        }
+        const { file, body } = await decodeImportFile(fileContent, password);
+        // 登入前無 session 快照可比對，不受 §5.1.5 檢查；keyGeneration 遞增仍會使其他舊 session 的寫入失效
+        await writeUnguarded(db, importWritePlan(file, body));
+        issuedImportTickets.delete(ticket);
+        clearSession();
+      })();
+    },
+
     async isInitialized() {
       return (await readSecurityConfig(db)) !== undefined;
     },

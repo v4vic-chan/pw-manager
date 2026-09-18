@@ -1,4 +1,10 @@
-# 本地密碼儲存器 — 中粒度系統規格 v1.6
+# 本地密碼儲存器 — 中粒度系統規格 v1.7
+
+<!-- v1.7 變更摘要：
+本次僅修訂一項：匯入檔 header 的 kdfParams 為不受信任的外部輸入，於金鑰衍生前新增資源上限檢查（§5.3 步驟 1），
+memoryKiB ≤ 1048576、iterations ≤ 10、parallelism = 1，防止惡意或損毀檔案造成記憶體耗盡或分頁凍結；
+§5.1.1 補上交叉引用，並新增對應驗收標準 §6 第 17 項。其餘章節與 v1.6 相同。
+-->
 
 <!-- v1.6 變更摘要：
 本次僅修訂一項：登入頁匯入流程新增確認字串步驟（§5.3），須完全相符輸入固定字串 "OVERWRITE" 才可進入檔案選擇，
@@ -231,6 +237,7 @@
 - 最低參數：memoryKiB ≥ 19456、iterations ≥ 2、parallelism = 1。
 - rawKey 匯入 Web Crypto 作為 HKDF 基礎金鑰（KeyUsages 僅 `["deriveKey"]`）後，依 §4.1 衍生出 encryptionKey（non-extractable）；rawKey 不得直接作為加密金鑰或參與驗證比對。
 - 版本升級（變更 kdfParams 或加密方案）：依 §4.1.3 走 §4.1.1 共用重新金鑰化程序，不需同時支援多組參數並存。
+- 匯入檔所帶的 kdfParams 另受 §5.3 上限約束。
 
 #### 5.1.2 資料加密
 - AES-256-GCM，透過 SubtleCrypto 實作，不採用 CBC。
@@ -269,7 +276,7 @@
   - 輸入不符時，「繼續」按鈕維持 disabled 狀態，不得進入檔案選擇流程；Service Layer 的登入前匯入入口亦須驗證此確認字串，不符即拒絕，不得僅依賴 UI 按鈕狀態。
   - 通過確認後，才進入下列流程步驟 1。
 - 匯入流程：
-  1. 讀取明文 header，取得 cryptoVersion、masterPasswordSalt、kdfParams。若 header 內 cryptoVersion 高於當前系統支援版本，拒絕匯入並提示版本落差。
+  1. 讀取明文 header，取得 cryptoVersion、masterPasswordSalt、kdfParams。若 header 內 cryptoVersion 高於當前系統支援版本，拒絕匯入並提示版本落差。header 為不受信任的外部輸入，其 kdfParams 須於衍生金鑰前先行檢查：memoryKiB ≤ 1048576（1 GiB）、iterations ≤ 10、parallelism = 1；低於 §5.1.1 最低參數者亦同。任一不符即拒絕匯入，不得進行金鑰衍生（防止惡意或損毀的檔案造成記憶體耗盡或分頁長時間凍結）。
   2. 要求使用者輸入**備份檔當時的**主密碼，依 header 中的參數與 §4.1 步驟衍生 encryptionKey。
   3. 以該 encryptionKey 解密 encryptedBody，解密即為密碼驗證，不另設獨立驗證步驟。GCM 認證失敗即拒絕匯入（密碼錯誤與檔案損毀無法區分，提示訊息需同時涵蓋兩者）。
   4. 解密成功後，驗證本體結構符合 §3 資料契約，並以同一把 encryptionKey 解密本體內的 canaryPayload、比對明文等於 `CANARY_PLAINTEXT`（恢復金鑰承諾性質，同 §4.1）；任一失敗即拒絕匯入。
@@ -298,6 +305,7 @@
 14. 重新金鑰化程序執行期間（寫入鎖定旗標設定中），呼叫任一 §4.1.1 所列寫入 API 須立即被拒絕並回傳錯誤碼 `REKEY_IN_PROGRESS`，且 IndexedDB 無任何資料變動；此期間閒置逾時不得觸發。
 15. SecurityConfig.keyGeneration 與 session 快照不一致時，任何受 §5.1.5 規範的寫入須被拒絕並回傳錯誤碼 `KEY_GENERATION_MISMATCH`，且沒有任何資料落地，session 須被清除並要求重新登入。
 16. 登入前匯入流程，須先驗證使用者輸入的確認字串完全相符於固定值 `'OVERWRITE'`，才可進入檔案選擇與後續匯入流程；字串不符時不得進入下一步。
+17. 匯入檔 header 的 kdfParams 超過 §5.3 上限（memoryKiB > 1048576、iterations > 10）或 parallelism ≠ 1 時，須於金鑰衍生前即拒絕匯入，且 IndexedDB 無任何變動。
 
 ## 7. 待實作端決定事項
 - 型態定義的檔案組織方式，由 CLI 依專案慣例決定。

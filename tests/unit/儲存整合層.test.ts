@@ -11,7 +11,11 @@ import {
 } from "../../src/storage/db";
 import { UNCATEGORIZED_CATEGORY_ID } from "../../src/services/category";
 import { createIdleTimer } from "../../src/services/idleTimer";
+import { CURRENT_CRYPTO_VERSION } from "../../src/services/masterPassword";
+import { decryptPayload, deriveKeys, encryptPayload } from "../../src/crypto/crypto";
+import type { ExportBody } from "../../src/services/importExport";
 import type { TwoFactorSetup } from "../../src/services/twoFactor";
+import type { ExportFile } from "../../src/types/ExportFile";
 
 /**
  * 模組：儲存整合層（src/services/storage.ts 編排 + src/storage/db.ts IndexedDB 讀寫）
@@ -481,6 +485,291 @@ describe("閒置計時整合（§4.1.1 步驟 1、5；§5.1.4；AC14）", () => 
     expect(idleTimer.isPaused()).toBe(false);
     expect(idleTimer.isRunning()).toBe(true);
     idleTimer.stop();
+    storage.close();
+  });
+});
+
+async function decryptExportBody(file: ExportFile, password: string): Promise<string> {
+  const key = await deriveKeys(password, file.header.masterPasswordSalt, file.header.kdfParams);
+  return decryptPayload(file.encryptedBody, key);
+}
+
+/** 以備份密碼解開本體、修改後再以同一把金鑰重新加密，模擬遭竄改或損毀的備份檔 */
+async function craftExportFile(
+  file: ExportFile,
+  password: string,
+  mutate: (body: ExportBody, key: CryptoKey) => void | Promise<void>
+): Promise<string> {
+  const key = await deriveKeys(password, file.header.masterPasswordSalt, file.header.kdfParams);
+  const body = JSON.parse(await decryptPayload(file.encryptedBody, key)) as ExportBody;
+  await mutate(body, key);
+  const encryptedBody = await encryptPayload(JSON.stringify(body), key, file.header.cryptoVersion);
+  return JSON.stringify({ ...file, encryptedBody });
+}
+
+describe("§5.3 匯出（§3.2、AC10）", () => {
+  test("須已登入；header 為明文且與保險庫參數一致；無正確主密碼無法解密本體；檔案不含任何明文秘密與失敗計數", async () => {
+    const dbName = newDbName();
+    const storage = await createStorage({ dbName });
+    await storage.initialize(PASSWORD);
+    await expect(storage.exportVault()).rejects.toMatchObject({ code: "NOT_AUTHENTICATED" });
+
+    await storage.login(PASSWORD);
+    const setup = await enableTwoFactor(storage);
+    await storage.addEntry(entryInput, await storage.loadCategories());
+
+    const file = await storage.exportVault();
+    const raw = await rawDump(dbName);
+    expect(file.formatVersion).toBe(1);
+    expect(file.header).toEqual({
+      cryptoVersion: raw.securityConfig!.cryptoVersion,
+      masterPasswordSalt: raw.securityConfig!.masterPasswordSalt,
+      kdfParams: raw.securityConfig!.kdfParams,
+    });
+
+    const serialized = JSON.stringify(file);
+    expect(serialized).not.toContain(ENTRY_PLAINTEXT_PASSWORD);
+    expect(serialized).not.toContain(setup.secret);
+    for (const code of setup.recoveryCodesPlaintext) expect(serialized).not.toContain(code);
+
+    const wrongKey = await deriveKeys(WRONG_PASSWORD, file.header.masterPasswordSalt, file.header.kdfParams);
+    await expect(decryptPayload(file.encryptedBody, wrongKey)).rejects.toThrow();
+
+    const bodyJson = await decryptExportBody(file, PASSWORD);
+    expect(bodyJson).not.toContain(ENTRY_PLAINTEXT_PASSWORD);
+    const body = JSON.parse(bodyJson) as ExportBody;
+    expect(body.entries).toEqual(raw.entries);
+    expect(body.categories).toEqual(raw.categories);
+    for (const excluded of ["loginFailureState", "totpFailureState", "masterPasswordSalt", "kdfParams", "cryptoVersion"]) {
+      expect(body.securityConfig).not.toHaveProperty(excluded);
+    }
+    storage.close();
+  });
+
+  test("keyGeneration 與 session 快照不符時拒絕匯出（KEY_GENERATION_MISMATCH）並清除 session", async () => {
+    const { storage, dbName } = await setupUnlocked();
+    const db = await openVaultDB(dbName);
+    await writeUnguarded(db, { updateSecurityConfig: (c) => ({ ...c, keyGeneration: c.keyGeneration + 1 }) });
+    db.close();
+
+    await expect(storage.exportVault()).rejects.toMatchObject({ code: "KEY_GENERATION_MISMATCH" });
+    expect(storage.isUnlocked()).toBe(false);
+    storage.close();
+  });
+});
+
+describe("§5.3 匯入：整份覆蓋（步驟 6、7）", () => {
+  test("已登入匯入：整份覆蓋、主密碼回到備份當時、keyGeneration = max + 1、失敗計數重置、完成後清除 session", async () => {
+    const { storage, dbName } = await setupUnlocked();
+    const work = await storage.addCategory("Work", await storage.loadCategories());
+    await storage.addEntry({ ...entryInput, categoryId: work.id }, await storage.loadCategories());
+    const exported = JSON.stringify(await storage.exportVault());
+    const backupEntries = await storage.loadEntries();
+    const backupCategories = await storage.loadCategories();
+
+    await storage.addEntry({ ...entryInput, appName: "After Export" }, await storage.loadCategories());
+    await storage.changeMasterPassword(NEW_PASSWORD);
+    const currentGeneration = (await rawDump(dbName)).securityConfig!.keyGeneration;
+
+    await storage.importVault({ fileContent: exported, password: PASSWORD });
+    expect(storage.isUnlocked()).toBe(false);
+
+    const config = (await rawDump(dbName)).securityConfig!;
+    expect(config.keyGeneration).toBe(Math.max(currentGeneration, 1) + 1);
+    expect(config.loginFailureState).toEqual({ failedAttempts: 0, lockedUntil: null });
+    expect(config.totpFailureState).toEqual({ failedAttempts: 0, lockedUntil: null });
+
+    expect(await storage.login(NEW_PASSWORD)).toEqual({ ok: false, reason: "INVALID_MASTER_PASSWORD" });
+    expect(await storage.login(PASSWORD)).toEqual({ ok: true, requiresSecondFactor: false });
+    expect(await storage.loadEntries()).toEqual(backupEntries);
+    expect(await storage.loadCategories()).toEqual(backupCategories);
+    storage.close();
+  });
+
+  test("登入頁匯入：須先通過確認字串取得許可（AC16）；許可僅能使用一次；2FA 狀態一併還原", async () => {
+    const { storage: source } = await setupUnlocked();
+    const setup = await enableTwoFactor(source);
+    await source.addEntry(entryInput, await source.loadCategories());
+    const exported = JSON.stringify(await source.exportVault());
+    source.close();
+
+    const dbName = newDbName();
+    const target = await createStorage({ dbName });
+    await target.initialize(NEW_PASSWORD);
+    await target.login(WRONG_PASSWORD);
+    const before = await rawDump(dbName);
+
+    await expect(target.startPreLoginImport({ confirmation: "overwrite" })).rejects.toMatchObject({
+      code: "CONFIRMATION_MISMATCH",
+    });
+    await expect(target.importVault({ fileContent: exported, password: PASSWORD })).rejects.toMatchObject({
+      code: "CONFIRMATION_REQUIRED",
+    });
+    expect(await rawDump(dbName)).toEqual(before);
+
+    const ticket = await target.startPreLoginImport({ confirmation: "OVERWRITE" });
+    await target.importVault({ fileContent: exported, password: PASSWORD, ticket });
+    await expect(target.importVault({ fileContent: exported, password: PASSWORD, ticket })).rejects.toMatchObject({
+      code: "CONFIRMATION_REQUIRED",
+    });
+
+    const config = (await rawDump(dbName)).securityConfig!;
+    expect(config.loginFailureState).toEqual({ failedAttempts: 0, lockedUntil: null });
+    expect(config.keyGeneration).toBe(2);
+
+    expect(await target.login(NEW_PASSWORD)).toEqual({ ok: false, reason: "INVALID_MASTER_PASSWORD" });
+    expect(await target.login(PASSWORD)).toEqual({ ok: true, requiresSecondFactor: true });
+    expect(await target.verifySecondFactor({ totpCode: await generate({ secret: setup.secret }) })).toEqual({
+      ok: true,
+    });
+    expect((await target.loadEntries())[0].password).toBe(ENTRY_PLAINTEXT_PASSWORD);
+    target.close();
+  });
+
+  test("尚未初始化（SecurityConfig 不存在）時登入頁匯入，當前 keyGeneration 視為 0", async () => {
+    const { storage: source } = await setupUnlocked();
+    const exported = JSON.stringify(await source.exportVault());
+    source.close();
+
+    const dbName = newDbName();
+    const target = await createStorage({ dbName });
+    const ticket = await target.startPreLoginImport({ confirmation: "OVERWRITE" });
+    await target.importVault({ fileContent: exported, password: PASSWORD, ticket });
+
+    const raw = await rawDump(dbName);
+    expect(raw.securityConfig?.keyGeneration).toBe(2);
+    expect(raw.categories).toHaveLength(1);
+    expect(await target.login(PASSWORD)).toEqual({ ok: true, requiresSecondFactor: false });
+    target.close();
+  });
+});
+
+describe("§5.3 匯入：任何驗證失敗都在寫入前完整拒絕，不留任何變動", () => {
+  async function prepare() {
+    const { storage, dbName } = await setupUnlocked();
+    await storage.addEntry(entryInput, await storage.loadCategories());
+    const file = await storage.exportVault();
+    await storage.addEntry({ ...entryInput, appName: "Current Only" }, await storage.loadCategories());
+    const before = await rawDump(dbName);
+    return { storage, dbName, file, before };
+  }
+
+  test("備份密碼錯誤：DECRYPTION_FAILED；版本過新：UNSUPPORTED_VERSION；格式錯誤：INVALID_FORMAT；session 保留", async () => {
+    const { storage, dbName, file, before } = await prepare();
+
+    await expect(
+      storage.importVault({ fileContent: JSON.stringify(file), password: WRONG_PASSWORD })
+    ).rejects.toMatchObject({ code: "DECRYPTION_FAILED" });
+
+    const tooNew = { ...file, header: { ...file.header, cryptoVersion: CURRENT_CRYPTO_VERSION + 1 } };
+    await expect(
+      storage.importVault({ fileContent: JSON.stringify(tooNew), password: PASSWORD })
+    ).rejects.toMatchObject({ code: "UNSUPPORTED_VERSION" });
+
+    await expect(storage.importVault({ fileContent: "{broken", password: PASSWORD })).rejects.toMatchObject({
+      code: "INVALID_FORMAT",
+    });
+
+    expect(await rawDump(dbName)).toEqual(before);
+    expect(storage.isUnlocked()).toBe(true);
+    storage.close();
+  });
+
+  test("本體違反 §3 資料契約（條目指向不存在的分類）：INVALID_CONTENT", async () => {
+    const { storage, dbName, file, before } = await prepare();
+    const crafted = await craftExportFile(file, PASSWORD, (body) => {
+      body.entries[0].categoryId = "missing-category";
+    });
+
+    await expect(storage.importVault({ fileContent: crafted, password: PASSWORD })).rejects.toMatchObject({
+      code: "INVALID_CONTENT",
+    });
+    expect(await rawDump(dbName)).toEqual(before);
+    storage.close();
+  });
+
+  test("canary 明文不符（GCM 認證可通過）：DECRYPTION_FAILED", async () => {
+    const { storage, dbName, file, before } = await prepare();
+    const crafted = await craftExportFile(file, PASSWORD, async (body, key) => {
+      body.securityConfig.canaryPayload = await encryptPayload("not the canary", key, file.header.cryptoVersion);
+    });
+
+    await expect(storage.importVault({ fileContent: crafted, password: PASSWORD })).rejects.toMatchObject({
+      code: "DECRYPTION_FAILED",
+    });
+    expect(await rawDump(dbName)).toEqual(before);
+    storage.close();
+  });
+
+  test("條目密文無法以備份金鑰解密：INVALID_CONTENT", async () => {
+    const { storage, dbName, file, before } = await prepare();
+    const crafted = await craftExportFile(file, PASSWORD, async (body) => {
+      const otherKey = await deriveKeys(NEW_PASSWORD, file.header.masterPasswordSalt, file.header.kdfParams);
+      body.entries[0].password = await encryptPayload("other key", otherKey, file.header.cryptoVersion);
+    });
+
+    await expect(storage.importVault({ fileContent: crafted, password: PASSWORD })).rejects.toMatchObject({
+      code: "INVALID_CONTENT",
+    });
+    expect(await rawDump(dbName)).toEqual(before);
+    storage.close();
+  });
+
+  test("AC17：header 的 kdfParams 超過上限或 parallelism ≠ 1 時拒絕匯入（INVALID_FORMAT），IndexedDB 無任何變動", async () => {
+    const { storage, dbName, file, before } = await prepare();
+    const withKdf = (kdf: Partial<ExportFile["header"]["kdfParams"]>) =>
+      JSON.stringify({ ...file, header: { ...file.header, kdfParams: { ...file.header.kdfParams, ...kdf } } });
+
+    for (const kdf of [{ memoryKiB: 1_048_577 }, { iterations: 11 }, { parallelism: 2 }]) {
+      await expect(storage.importVault({ fileContent: withKdf(kdf), password: PASSWORD })).rejects.toMatchObject({
+        code: "INVALID_FORMAT",
+      });
+    }
+    expect(await rawDump(dbName)).toEqual(before);
+    expect(storage.isUnlocked()).toBe(true);
+    storage.close();
+
+    // 登入頁入口：同樣拒絕、不落地，且許可未被消耗
+    const preLoginDb = newDbName();
+    const target = await createStorage({ dbName: preLoginDb });
+    await target.initialize(NEW_PASSWORD);
+    const targetBefore = await rawDump(preLoginDb);
+    const ticket = await target.startPreLoginImport({ confirmation: "OVERWRITE" });
+
+    await expect(
+      target.importVault({ fileContent: withKdf({ memoryKiB: 1_048_577 }), password: PASSWORD, ticket })
+    ).rejects.toMatchObject({ code: "INVALID_FORMAT" });
+    expect(await rawDump(preLoginDb)).toEqual(targetBefore);
+
+    await target.importVault({ fileContent: JSON.stringify(file), password: PASSWORD, ticket });
+    expect(await target.login(PASSWORD)).toEqual({ ok: true, requiresSecondFactor: false });
+    target.close();
+  });
+
+  test("匯入交易中途寫入失敗：整筆回滾（含已發出的 SecurityConfig 取代與清空），session 保留", async () => {
+    const { storage, dbName, file, before } = await prepare();
+
+    // 第 1 次 put 為整筆取代 SecurityConfig（其後清空條目與分類），第 2 次 put（第一筆分類）失敗
+    failNthPut(2);
+    await expect(
+      storage.importVault({ fileContent: JSON.stringify(file), password: PASSWORD })
+    ).rejects.toThrow("injected write failure");
+    vi.restoreAllMocks();
+
+    expect(await rawDump(dbName)).toEqual(before);
+    expect(storage.isUnlocked()).toBe(true);
+    storage.close();
+  });
+
+  test("重新金鑰化期間匯入與匯出皆以 REKEY_IN_PROGRESS 拒絕", async () => {
+    const { storage, file } = await prepare();
+
+    const rekeying = storage.changeMasterPassword(NEW_PASSWORD);
+    await expect(storage.exportVault()).rejects.toMatchObject({ code: "REKEY_IN_PROGRESS" });
+    await expect(
+      storage.importVault({ fileContent: JSON.stringify(file), password: PASSWORD })
+    ).rejects.toMatchObject({ code: "REKEY_IN_PROGRESS" });
+    await rekeying;
     storage.close();
   });
 });

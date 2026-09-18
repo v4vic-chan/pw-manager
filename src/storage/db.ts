@@ -34,6 +34,11 @@ export interface WritePlan {
   /** 僅首次設定使用：以 add 寫入，已存在時交易失敗 */
   addSecurityConfig?: SecurityConfig;
   updateSecurityConfig?: (current: SecurityConfig) => SecurityConfig;
+  /** §5.3 整份覆蓋：以交易內現值（可能不存在）計算並整筆寫入 SecurityConfig */
+  replaceSecurityConfig?: (current: SecurityConfig | undefined) => SecurityConfig;
+  /** §5.3 整份覆蓋：於同一交易內先清空再寫入 */
+  clearEntries?: boolean;
+  clearCategories?: boolean;
   deleteEntryIds?: readonly string[];
   deleteCategoryIds?: readonly string[];
   putCategories?: readonly Category[];
@@ -100,11 +105,20 @@ export async function writeUnguarded(db: VaultDB, plan: WritePlan): Promise<void
 
 function storesFor(plan: WritePlan, guarded: boolean): VaultStoreName[] {
   const stores = new Set<VaultStoreName>();
-  if (guarded || plan.addSecurityConfig || plan.updateSecurityConfig) stores.add("securityConfig");
-  if (plan.deleteEntryIds?.length || plan.putEntries?.length || plan.patchEntryCategoryIds?.length) {
+  if (guarded || plan.addSecurityConfig || plan.updateSecurityConfig || plan.replaceSecurityConfig) {
+    stores.add("securityConfig");
+  }
+  if (
+    plan.clearEntries ||
+    plan.deleteEntryIds?.length ||
+    plan.putEntries?.length ||
+    plan.patchEntryCategoryIds?.length
+  ) {
     stores.add("entries");
   }
-  if (plan.deleteCategoryIds?.length || plan.putCategories?.length) stores.add("categories");
+  if (plan.clearCategories || plan.deleteCategoryIds?.length || plan.putCategories?.length) {
+    stores.add("categories");
+  }
   return [...stores];
 }
 
@@ -151,6 +165,11 @@ async function applyPlan(tx: WriteTransaction, plan: WritePlan, current: Securit
     if (current === undefined) throw new Error("SecurityConfig 不存在，無法更新（保險庫尚未初始化）");
     await tx.objectStore("securityConfig").put(plan.updateSecurityConfig(current), SECURITY_CONFIG_KEY);
   }
+  if (plan.replaceSecurityConfig) {
+    await tx.objectStore("securityConfig").put(plan.replaceSecurityConfig(current), SECURITY_CONFIG_KEY);
+  }
+  if (plan.clearEntries) await tx.objectStore("entries").clear();
+  if (plan.clearCategories) await tx.objectStore("categories").clear();
   for (const id of plan.deleteEntryIds ?? []) await tx.objectStore("entries").delete(id);
   for (const id of plan.deleteCategoryIds ?? []) await tx.objectStore("categories").delete(id);
   for (const category of plan.putCategories ?? []) await tx.objectStore("categories").put(category);

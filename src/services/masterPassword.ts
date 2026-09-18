@@ -15,7 +15,7 @@ const MIN_MASTER_PASSWORD_LENGTH = 12;
 const DEFAULT_KDF_PARAMS: KdfParams = { memoryKiB: 19456, iterations: 2, parallelism: 1 };
 
 /** 目前程式碼支援的 cryptoVersion */
-const CURRENT_CRYPTO_VERSION = 1;
+export const CURRENT_CRYPTO_VERSION = 1;
 
 /** §4.1：前 5 次失敗僅計數 */
 const FREE_FAILED_ATTEMPTS = 5;
