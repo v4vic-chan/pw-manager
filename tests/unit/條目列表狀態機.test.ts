@@ -53,6 +53,8 @@ describe("載入", () => {
       sortDirection: "asc",
       revealed: {},
       copyNotice: null,
+      dialog: null,
+      categoryPanel: { open: false, busy: false, error: null },
     });
   });
 
@@ -77,6 +79,15 @@ describe("載入", () => {
       { type: "PASSWORD_REVEALED", entryId: "entry-1", password: "x" },
       { type: "PASSWORD_HIDDEN", entryId: "entry-1" },
       { type: "COPY_NOTICE_CLEARED" },
+      { type: "DIALOG_OPENED", target: { type: "entryForm", entryId: null } },
+      { type: "DIALOG_CLOSED" },
+      { type: "DIALOG_SUBMITTING" },
+      { type: "DIALOG_FAILED", error: "x" },
+      { type: "CATEGORY_PANEL_TOGGLED" },
+      { type: "CATEGORY_PANEL_SUBMITTING" },
+      { type: "CATEGORY_PANEL_FAILED", error: "x" },
+      { type: "CATEGORY_PANEL_IDLE" },
+      { type: "RELOADED", entries: [], categories: [], revealed: {} },
     ];
     for (const event of events) {
       expect(reduceEntries(initialEntriesState, event)).toBe(initialEntriesState);
@@ -252,6 +263,151 @@ describe("複製提示", () => {
     expect(state.copyNotice).toEqual(first);
     expect(apply(state, { type: "COPY_NOTICE_SHOWN", notice: second })).toMatchObject({ copyNotice: second });
     expect(apply(state, { type: "COPY_NOTICE_CLEARED" })).toMatchObject({ copyNotice: null });
+  });
+});
+
+describe("對話框（新增／編輯／刪除確認）", () => {
+  const createTarget = { type: "entryForm", entryId: null } as const;
+
+  test("開啟後為 idle 狀態；同時只能有一個對話框；可關閉", () => {
+    const opened = readyAfter({ type: "DIALOG_OPENED", target: createTarget });
+    expect(opened.dialog).toEqual({ target: createTarget, busy: false, error: null });
+
+    expect(apply(opened, { type: "DIALOG_OPENED", target: { type: "entryForm", entryId: "entry-1" } })).toBe(opened);
+    expect(apply(opened, { type: "DIALOG_CLOSED" })).toMatchObject({ dialog: null });
+    expect(reduceEntries(ready(), { type: "DIALOG_CLOSED" })).toEqual(ready());
+  });
+
+  test("目標不存在時不開啟：編輯／刪除條目須是既有條目，刪除分類須是既有的使用者分類", () => {
+    const state = ready();
+    expect(reduceEntries(state, { type: "DIALOG_OPENED", target: { type: "entryForm", entryId: "nope" } })).toBe(state);
+    expect(reduceEntries(state, { type: "DIALOG_OPENED", target: { type: "deleteEntry", entryId: "nope" } })).toBe(state);
+    expect(reduceEntries(state, { type: "DIALOG_OPENED", target: { type: "deleteCategory", categoryId: "nope" } })).toBe(
+      state
+    );
+    expect(
+      readyAfter({ type: "DIALOG_OPENED", target: { type: "deleteEntry", entryId: "entry-1" } }).dialog?.target
+    ).toEqual({ type: "deleteEntry", entryId: "entry-1" });
+    expect(
+      readyAfter({ type: "DIALOG_OPENED", target: { type: "entryForm", entryId: "entry-1" } }).dialog?.target
+    ).toEqual({ type: "entryForm", entryId: "entry-1" });
+  });
+
+  test("「未分類」不可開啟刪除分類對話框（系統預設分類保護）", () => {
+    const state = ready();
+    expect(
+      reduceEntries(state, { type: "DIALOG_OPENED", target: { type: "deleteCategory", categoryId: UNCATEGORIZED_ID } })
+    ).toBe(state);
+    expect(
+      readyAfter({ type: "DIALOG_OPENED", target: { type: "deleteCategory", categoryId: WORK_ID } }).dialog?.target
+    ).toEqual({ type: "deleteCategory", categoryId: WORK_ID });
+  });
+
+  test("送出中 busy、失敗後回到可編輯並帶錯誤；再次送出清除舊錯誤", () => {
+    const submitting = readyAfter({ type: "DIALOG_OPENED", target: createTarget }, { type: "DIALOG_SUBMITTING" });
+    expect(submitting.dialog).toEqual({ target: createTarget, busy: true, error: null });
+
+    const failed = apply(submitting, { type: "DIALOG_FAILED", error: "壞了" }) as ReadyEntriesState;
+    expect(failed.dialog).toEqual({ target: createTarget, busy: false, error: "壞了" });
+    expect((apply(failed, { type: "DIALOG_SUBMITTING" }) as ReadyEntriesState).dialog).toMatchObject({
+      busy: true,
+      error: null,
+    });
+  });
+
+  test("沒有對話框時，送出中／失敗事件忽略", () => {
+    const state = ready();
+    expect(reduceEntries(state, { type: "DIALOG_SUBMITTING" })).toBe(state);
+    expect(reduceEntries(state, { type: "DIALOG_FAILED", error: "x" })).toBe(state);
+  });
+});
+
+describe("分類管理面板", () => {
+  test("開合切換；關閉時清除錯誤與忙碌旗標", () => {
+    const open = readyAfter({ type: "CATEGORY_PANEL_TOGGLED" });
+    expect(open.categoryPanel).toEqual({ open: true, busy: false, error: null });
+
+    const failed = apply(open, { type: "CATEGORY_PANEL_SUBMITTING" }, { type: "CATEGORY_PANEL_FAILED", error: "壞了" });
+    expect((failed as ReadyEntriesState).categoryPanel).toEqual({ open: true, busy: false, error: "壞了" });
+
+    expect((apply(failed, { type: "CATEGORY_PANEL_TOGGLED" }) as ReadyEntriesState).categoryPanel).toEqual({
+      open: false,
+      busy: false,
+      error: null,
+    });
+  });
+
+  test("送出中 busy；IDLE 回到可操作並清除錯誤", () => {
+    const busy = readyAfter({ type: "CATEGORY_PANEL_TOGGLED" }, { type: "CATEGORY_PANEL_SUBMITTING" });
+    expect(busy.categoryPanel).toEqual({ open: true, busy: true, error: null });
+    expect((apply(busy, { type: "CATEGORY_PANEL_IDLE" }) as ReadyEntriesState).categoryPanel).toEqual({
+      open: true,
+      busy: false,
+      error: null,
+    });
+  });
+});
+
+describe("寫入後重新載入（RELOADED）", () => {
+  const reloadedEntries = redactedEntries().filter((entry) => entry.id !== "entry-4");
+  const reloadedCategories = CATEGORIES.filter((category) => category.id !== WORK_ID);
+
+  test("替換條目與分類，保留關鍵字與排序；已不存在的分類自篩選勾選中移除", () => {
+    const before = readyAfter(
+      { type: "KEYWORD_CHANGED", keyword: "ali" },
+      { type: "CATEGORY_TOGGLED", categoryId: WORK_ID },
+      { type: "CATEGORY_TOGGLED", categoryId: EMAIL_ID },
+      { type: "SORT_KEY_CHANGED", key: "updatedAt" },
+      { type: "SORT_DIRECTION_TOGGLED" }
+    );
+    const after = apply(before, {
+      type: "RELOADED",
+      entries: reloadedEntries,
+      categories: reloadedCategories,
+      revealed: {},
+    }) as ReadyEntriesState;
+
+    expect(after.entries).toEqual(reloadedEntries);
+    expect(after.categories).toEqual(reloadedCategories);
+    expect(after).toMatchObject({
+      keyword: "ali",
+      categoryIds: [EMAIL_ID],
+      sortKey: "updatedAt",
+      sortDirection: "desc",
+    });
+  });
+
+  test("顯示中的明文以事件帶入的 revealed 為準（編輯密碼後更新、條目刪除後移除）", () => {
+    const before = readyAfter(
+      { type: "PASSWORD_REVEALED", entryId: "entry-1", password: "old-pw" },
+      { type: "PASSWORD_REVEALED", entryId: "entry-4", password: "pw-slack-2Vc6" }
+    );
+    const after = apply(before, {
+      type: "RELOADED",
+      entries: reloadedEntries,
+      categories: reloadedCategories,
+      revealed: { "entry-1": "new-pw" },
+    }) as ReadyEntriesState;
+    expect(after.revealed).toEqual({ "entry-1": "new-pw" });
+    expect(JSON.stringify(after)).not.toContain("old-pw");
+  });
+
+  test("複製提示指向已不存在的條目時清除；對話框與面板狀態不受影響", () => {
+    const before = readyAfter(
+      { type: "COPY_NOTICE_SHOWN", notice: { entryId: "entry-4", field: "password", status: "copied" } },
+      { type: "CATEGORY_PANEL_TOGGLED" },
+      { type: "DIALOG_OPENED", target: { type: "entryForm", entryId: null } },
+      { type: "DIALOG_SUBMITTING" }
+    );
+    const after = apply(before, {
+      type: "RELOADED",
+      entries: reloadedEntries,
+      categories: reloadedCategories,
+      revealed: {},
+    }) as ReadyEntriesState;
+    expect(after.copyNotice).toBeNull();
+    expect(after.dialog).toEqual(before.dialog);
+    expect(after.categoryPanel).toEqual(before.categoryPanel);
   });
 });
 

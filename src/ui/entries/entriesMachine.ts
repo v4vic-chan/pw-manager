@@ -17,6 +17,26 @@ export interface CopyNotice {
   status: "copied" | "failed";
 }
 
+/** 同時只會開啟一個對話框；entryId 為 null 表示新增 */
+export type DialogTarget =
+  | { type: "entryForm"; entryId: string | null }
+  | { type: "deleteEntry"; entryId: string }
+  | { type: "deleteCategory"; categoryId: string };
+
+export interface DialogState {
+  target: DialogTarget;
+  /** 寫入進行中：不可重複送出、不可關閉 */
+  busy: boolean;
+  error: string | null;
+}
+
+/** 分類管理面板：新增／重新命名／排序的忙碌與錯誤狀態（輸入框的文字為畫面區域狀態） */
+export interface CategoryPanelState {
+  open: boolean;
+  busy: boolean;
+  error: string | null;
+}
+
 export type EntriesState =
   | { phase: "loading" }
   | { phase: "error"; error: string }
@@ -34,6 +54,8 @@ export type EntriesState =
       /** 使用者主動顯示的明文密碼，以條目 id 為鍵；隱藏或關閉時移除 */
       revealed: Record<string, string>;
       copyNotice: CopyNotice | null;
+      dialog: DialogState | null;
+      categoryPanel: CategoryPanelState;
     }
   | { phase: "closed" };
 
@@ -52,6 +74,16 @@ export type EntriesEvent =
   | { type: "PASSWORD_HIDDEN"; entryId: string }
   | { type: "COPY_NOTICE_SHOWN"; notice: CopyNotice }
   | { type: "COPY_NOTICE_CLEARED" }
+  | { type: "DIALOG_OPENED"; target: DialogTarget }
+  | { type: "DIALOG_CLOSED" }
+  | { type: "DIALOG_SUBMITTING" }
+  | { type: "DIALOG_FAILED"; error: string }
+  | { type: "CATEGORY_PANEL_TOGGLED" }
+  | { type: "CATEGORY_PANEL_SUBMITTING" }
+  | { type: "CATEGORY_PANEL_FAILED"; error: string }
+  | { type: "CATEGORY_PANEL_IDLE" }
+  /** 寫入成功後重新讀取的結果；revealed 由控制器依新的明文重新計算 */
+  | { type: "RELOADED"; entries: Entry[]; categories: Category[]; revealed: Record<string, string> }
   | { type: "CLOSED" };
 
 export const DEFAULT_SORT_KEY: SortKey = "appName";
@@ -76,6 +108,8 @@ export function reduceEntries(state: EntriesState, event: EntriesEvent): Entries
           sortDirection: DEFAULT_SORT_DIRECTION,
           revealed: {},
           copyNotice: null,
+          dialog: null,
+          categoryPanel: { open: false, busy: false, error: null },
         };
       }
       if (event.type === "LOAD_FAILED") return { phase: "error", error: event.error };
@@ -133,8 +167,71 @@ function reduceReady(state: ReadyEntriesState, event: EntriesEvent): EntriesStat
     case "COPY_NOTICE_CLEARED":
       return state.copyNotice === null ? state : { ...state, copyNotice: null };
 
+    case "DIALOG_OPENED":
+      return state.dialog === null && isValidDialogTarget(state, event.target)
+        ? { ...state, dialog: { target: event.target, busy: false, error: null } }
+        : state;
+
+    case "DIALOG_CLOSED":
+      return state.dialog === null ? state : { ...state, dialog: null };
+
+    case "DIALOG_SUBMITTING":
+      return state.dialog === null ? state : { ...state, dialog: { ...state.dialog, busy: true, error: null } };
+
+    case "DIALOG_FAILED":
+      return state.dialog === null ? state : { ...state, dialog: { ...state.dialog, busy: false, error: event.error } };
+
+    case "CATEGORY_PANEL_TOGGLED":
+      // 關閉時一併清除忙碌與錯誤，下次開啟是乾淨的面板
+      return {
+        ...state,
+        categoryPanel: state.categoryPanel.open
+          ? { open: false, busy: false, error: null }
+          : { ...state.categoryPanel, open: true },
+      };
+
+    case "CATEGORY_PANEL_SUBMITTING":
+      return { ...state, categoryPanel: { ...state.categoryPanel, busy: true, error: null } };
+
+    case "CATEGORY_PANEL_FAILED":
+      return { ...state, categoryPanel: { ...state.categoryPanel, busy: false, error: event.error } };
+
+    case "CATEGORY_PANEL_IDLE":
+      return state.categoryPanel.busy || state.categoryPanel.error !== null
+        ? { ...state, categoryPanel: { ...state.categoryPanel, busy: false, error: null } }
+        : state;
+
+    case "RELOADED": {
+      const categoryIds = new Set(event.categories.map((category) => category.id));
+      const entryIds = new Set(event.entries.map((entry) => entry.id));
+      return {
+        ...state,
+        entries: event.entries,
+        categories: event.categories,
+        // 已被刪除的分類不可留在篩選勾選中，否則使用者會看到「已篩選」卻無法取消
+        categoryIds: state.categoryIds.filter((id) => categoryIds.has(id)),
+        revealed: event.revealed,
+        copyNotice: state.copyNotice !== null && entryIds.has(state.copyNotice.entryId) ? state.copyNotice : null,
+      };
+    }
+
     default:
       return state;
+  }
+}
+
+/**
+ * 對話框目標必須存在；「未分類」為系統預設分類，不可進入刪除流程（§3.5、§4.3、AC4）。
+ * 這是狀態機層的防線，UI 也不會對「未分類」渲染刪除按鈕。
+ */
+function isValidDialogTarget(state: ReadyEntriesState, target: DialogTarget): boolean {
+  switch (target.type) {
+    case "entryForm":
+      return target.entryId === null || state.entries.some((entry) => entry.id === target.entryId);
+    case "deleteEntry":
+      return state.entries.some((entry) => entry.id === target.entryId);
+    case "deleteCategory":
+      return state.categories.some((category) => category.id === target.categoryId && !category.isSystemDefault);
   }
 }
 

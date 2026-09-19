@@ -1,5 +1,8 @@
 import { useSyncExternalStore } from "react";
+import { UNCATEGORIZED_CATEGORY_ID } from "../../services/category";
 import type { SortKey } from "../../services/search";
+import { CategoryPanel } from "./CategoryPanel";
+import { ConfirmDialog } from "./ConfirmDialog";
 import type { EntriesController } from "./entriesController";
 import {
   hasRevealed,
@@ -7,11 +10,23 @@ import {
   selectVisibleEntries,
   type ReadyEntriesState,
 } from "./entriesMachine";
-import { ENTRIES_MESSAGES, PASSWORD_MASK, UNCATEGORIZED_NAME, countSummary, noMatchMessage } from "./messages";
+import { EntryFormDialog } from "./EntryFormDialog";
+import {
+  ENTRIES_MESSAGES,
+  PASSWORD_MASK,
+  UNCATEGORIZED_NAME,
+  countSummary,
+  deleteCategoryMessage,
+  deleteCategoryTitle,
+  deleteEntryMessage,
+  noMatchMessage,
+} from "./messages";
 
 /**
  * 條目列表主畫面：查看、搜尋、篩選、排序（規格 §4.4 密碼顯示與複製、§4.5）。
  * 密碼預設以固定長度遮罩顯示；明文只在該筆被使用者主動顯示時才出現在 DOM。
+ * 新增／編輯／刪除條目與分類管理的入口也在此（§4.3、§4.4）：表單與確認以模態對話框呈現，
+ * 分類管理為可展開的面板；「未分類」的操作按鈕由 CategoryPanel 直接不渲染。
  * 所有操作轉交控制器；本層不接觸 storage，也不持有明文。
  */
 
@@ -35,9 +50,25 @@ export function EntriesScreen({ controller, onLogout }: EntriesScreenProps) {
     <main className="entries-page">
       <header className="entries-header">
         <h1>{ENTRIES_MESSAGES.title}</h1>
-        <button type="button" onClick={onLogout}>
-          登出
-        </button>
+        <div className="entries-header-actions">
+          {state.phase === "ready" && (
+            <>
+              <button type="button" onClick={() => controller.openCreateEntry()}>
+                新增條目
+              </button>
+              <button
+                type="button"
+                aria-expanded={state.categoryPanel.open}
+                onClick={() => controller.toggleCategoryPanel()}
+              >
+                管理分類
+              </button>
+            </>
+          )}
+          <button type="button" onClick={onLogout}>
+            登出
+          </button>
+        </div>
       </header>
       {state.phase === "loading" && <p role="status">{ENTRIES_MESSAGES.loading}</p>}
       {state.phase === "error" && <p role="alert">{state.error}</p>}
@@ -108,6 +139,15 @@ function EntriesReady({ state, controller }: { state: ReadyEntriesState; control
         </div>
       </section>
 
+      {state.categoryPanel.open && (
+        <CategoryPanel
+          controller={controller}
+          categories={selectCategoryOptions(state)}
+          busy={state.categoryPanel.busy}
+          error={state.categoryPanel.error}
+        />
+      )}
+
       {total > 0 && <p className="entries-count">{countSummary(visible.length, total)}</p>}
 
       {total === 0 && <p className="entries-empty">{ENTRIES_MESSAGES.empty}</p>}
@@ -155,6 +195,21 @@ function EntriesReady({ state, controller }: { state: ReadyEntriesState; control
                   >
                     複製密碼
                   </button>
+                  <button
+                    type="button"
+                    aria-label={`編輯 ${entry.appName}`}
+                    onClick={() => controller.openEditEntry(entry.id)}
+                  >
+                    編輯
+                  </button>
+                  <button
+                    type="button"
+                    className="danger"
+                    aria-label={`刪除 ${entry.appName}`}
+                    onClick={() => controller.openDeleteEntry(entry.id)}
+                  >
+                    刪除
+                  </button>
                 </div>
                 {notice?.status === "copied" && (
                   <p role="status">
@@ -167,6 +222,71 @@ function EntriesReady({ state, controller }: { state: ReadyEntriesState; control
           })}
         </ul>
       )}
+
+      <EntriesDialog state={state} controller={controller} />
     </>
   );
+}
+
+/** 目前開啟的對話框（同時只有一個）：條目表單、刪除條目確認、刪除分類確認 */
+function EntriesDialog({ state, controller }: { state: ReadyEntriesState; controller: EntriesController }) {
+  const { dialog } = state;
+  if (dialog === null) return null;
+  const { target } = dialog;
+  const cancel = () => controller.closeDialog();
+
+  switch (target.type) {
+    case "entryForm": {
+      const entry = target.entryId === null ? undefined : state.entries.find((candidate) => candidate.id === target.entryId);
+      return (
+        <EntryFormDialog
+          key={target.entryId ?? "new"}
+          mode={target.entryId === null ? "create" : "edit"}
+          initial={
+            entry === undefined
+              ? { appName: "", accountId: "", categoryId: UNCATEGORIZED_CATEGORY_ID }
+              : { appName: entry.appName, accountId: entry.accountId, categoryId: entry.categoryId }
+          }
+          categories={selectCategoryOptions(state)}
+          busy={dialog.busy}
+          error={dialog.error}
+          onSubmit={(values) => void controller.submitEntryForm(values)}
+          onCancel={cancel}
+        />
+      );
+    }
+
+    case "deleteEntry": {
+      const entry = state.entries.find((candidate) => candidate.id === target.entryId);
+      if (entry === undefined) return null;
+      return (
+        <ConfirmDialog
+          title={ENTRIES_MESSAGES.deleteEntryTitle}
+          message={deleteEntryMessage(entry.appName, entry.accountId)}
+          confirmLabel={ENTRIES_MESSAGES.deleteEntryConfirm}
+          busy={dialog.busy}
+          error={dialog.error}
+          onConfirm={() => void controller.confirmDeleteEntry()}
+          onCancel={cancel}
+        />
+      );
+    }
+
+    case "deleteCategory": {
+      const category = state.categories.find((candidate) => candidate.id === target.categoryId);
+      if (category === undefined) return null;
+      const affected = state.entries.filter((entry) => entry.categoryId === category.id).length;
+      return (
+        <ConfirmDialog
+          title={deleteCategoryTitle(category.name)}
+          message={deleteCategoryMessage(affected)}
+          confirmLabel={ENTRIES_MESSAGES.deleteCategoryConfirm}
+          busy={dialog.busy}
+          error={dialog.error}
+          onConfirm={() => void controller.confirmDeleteCategory()}
+          onCancel={cancel}
+        />
+      );
+    }
+  }
 }

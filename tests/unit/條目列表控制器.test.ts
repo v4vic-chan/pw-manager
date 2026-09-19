@@ -18,6 +18,7 @@ import {
   cloneCategories,
   cloneEntries,
 } from "./_shared/entriesFixtures";
+import { createFakeVault } from "./_shared/entriesFakes";
 
 /**
  * 模組：條目列表控制器（UI 層，純 TypeScript，以假 storage／假剪貼簿注入）
@@ -30,11 +31,7 @@ const GITHUB = ENTRIES[0];
 const GMAIL = ENTRIES[1];
 
 function createFakes(overrides: Partial<EntriesStorage> = {}, clipboardOverrides: Partial<ClipboardLike> = {}) {
-  const storage: EntriesStorage = {
-    loadEntries: vi.fn<EntriesStorage["loadEntries"]>(async () => cloneEntries()),
-    loadCategories: vi.fn<EntriesStorage["loadCategories"]>(async () => cloneCategories()),
-    ...overrides,
-  };
+  const storage: EntriesStorage = { ...createFakeVault().storage, ...overrides };
   let clipboardText = "";
   const clipboard = {
     writeText: vi.fn<ClipboardLike["writeText"]>(async (text) => {

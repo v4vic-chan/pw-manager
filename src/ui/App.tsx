@@ -47,11 +47,16 @@ function AuthenticatedView({
 
   useEffect(() => {
     // 非安全環境下 navigator.clipboard 可能為 undefined，控制器會將複製視為失敗
-    const controller = createEntriesController({ storage, clipboard: clipboard ?? navigator.clipboard });
+    // 寫入時發現 session 已失效：列表先顯示提示，稍後由此登出（登入頁顯示通用的「已登出」）
+    const controller = createEntriesController({
+      storage,
+      clipboard: clipboard ?? navigator.clipboard,
+      onSessionLost: () => authController.logout(),
+    });
     setEntries(controller);
     void controller.load();
     return () => controller.dispose();
-  }, [storage, clipboard]);
+  }, [authController, storage, clipboard]);
 
   if (entries === null) return null;
   return <EntriesScreen controller={entries} onLogout={() => authController.logout()} />;

@@ -7,7 +7,8 @@ import { createAuthController, type AuthStorage } from "../../src/ui/auth/authCo
 import { createEntriesController, type ClipboardLike, type EntriesStorage } from "../../src/ui/entries/entriesController";
 import { EntriesScreen } from "../../src/ui/entries/EntriesScreen";
 import { StorageError } from "../../src/services/storage";
-import { ALL_PASSWORDS, ENTRIES, cloneCategories, cloneEntries } from "./_shared/entriesFixtures";
+import { ALL_PASSWORDS, ENTRIES } from "./_shared/entriesFixtures";
+import { createFakeVault } from "./_shared/entriesFakes";
 
 /**
  * 模組：條目列表主畫面（React 元件，jsdom）
@@ -20,11 +21,7 @@ const GITHUB = ENTRIES[0];
 const GMAIL = ENTRIES[1];
 
 function createStorage(overrides: Partial<EntriesStorage> = {}): EntriesStorage {
-  return {
-    loadEntries: vi.fn<EntriesStorage["loadEntries"]>(async () => cloneEntries()),
-    loadCategories: vi.fn<EntriesStorage["loadCategories"]>(async () => cloneCategories()),
-    ...overrides,
-  };
+  return createFakeVault({ overrides }).storage;
 }
 
 function createClipboard(overrides: Partial<ClipboardLike> = {}) {
