@@ -1,0 +1,61 @@
+# 推送到 main 時自動 build 並部署到 GitHub Pages（https://<帳號>.github.io/pw-manager/）
+# 子路徑 /pw-manager/ 由 vite.config.ts 的 base 在 build 時套用，這裡不需額外設定。
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+
+# 僅使用 GitHub 內建的 GITHUB_TOKEN，不需要任何額外密鑰或 Personal Access Token
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同一時間只允許一個部署；不取消進行中的部署，讓正式部署能完整結束
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          # 對應 package.json engines（>=22）與本機開發環境
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # 任一步驟失敗，job 立即停止；deploy 因 needs: build 也不會執行
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
