@@ -81,6 +81,19 @@ export type RecoveryCodesRegenerationResult =
   | { ok: true; batch: twoFactor.RecoveryCodesBatch }
   | ReverificationFailure;
 
+/** 已登入狀態下重新驗證主密碼（變更主密碼前）的結果；失敗計入 loginFailureState */
+export type MasterPasswordReverificationResult =
+  | { ok: true }
+  | { ok: false; reason: "INVALID_MASTER_PASSWORD" }
+  | LockedResult;
+
+/** 安全設定畫面所需的唯讀摘要；不含任何秘密 */
+export interface SecurityStatus {
+  twoFactorEnabled: boolean;
+  /** §4.2：剩餘未使用救援碼數（2FA 關閉時為 0），供「≤ 2 組時提示補發」使用 */
+  unusedRecoveryCodes: number;
+}
+
 export interface VaultStorage {
   isInitialized(): Promise<boolean>;
   /** §4.1 首次設定：單一交易寫入 SecurityConfig 與「未分類」；不建立 session，需再呼叫 login */
@@ -119,6 +132,14 @@ export interface VaultStorage {
 
   /** §4.1.2：以 §4.1.1 共用程序重新金鑰化 */
   changeMasterPassword(newPassword: string): Promise<void>;
+
+  /** 唯讀：須已登入；只回傳 2FA 開關與未使用救援碼數 */
+  getSecurityStatus(): Promise<SecurityStatus>;
+  /**
+   * 須已登入：重新驗證目前主密碼（變更主密碼前使用）。沿用 §4.1 的鎖定與失敗計數（loginFailureState），
+   * 成功時歸零；不影響 session，也不交出任何金鑰。
+   */
+  reverifyMasterPassword(password: string): Promise<MasterPasswordReverificationResult>;
 
   /** §5.3 匯出：須已登入；回傳 §3.2 ExportFile（明文 header + 以 session 金鑰加密的本體），不含任何明文秘密 */
   exportVault(): Promise<ExportFile>;
@@ -688,6 +709,38 @@ export async function createStorage(options: StorageOptions = {}): Promise<Vault
         });
         issuedBatches.delete(batch);
       });
+    },
+
+    async getSecurityStatus() {
+      requireSession();
+      const config = await requireConfig();
+      const unusedRecoveryCodes = config.twoFactorEnabled
+        ? (config.recoveryCodes ?? []).filter((code) => !code.used).length
+        : 0;
+      return { twoFactorEnabled: config.twoFactorEnabled, unusedRecoveryCodes };
+    },
+
+    async reverifyMasterPassword(password) {
+      requireSession();
+      const config = await requireConfig();
+      const now = new Date();
+
+      const lockout = masterPassword.getLoginLockoutState(config.loginFailureState, now);
+      if (lockout.locked) return lockedResult(lockout.waitSeconds);
+
+      // 衍生出的金鑰僅用於比對 canary，驗證後即捨棄，不取代 session 金鑰
+      const verification = await masterPassword.verifyMasterPassword(password, config);
+      if (!verification.ok) {
+        await writeUnguarded(db, { updateSecurityConfig: recordFailure("loginFailureState", now) });
+        return { ok: false, reason: "INVALID_MASTER_PASSWORD" };
+      }
+      await writeUnguarded(db, {
+        updateSecurityConfig: (current) => ({
+          ...current,
+          loginFailureState: masterPassword.recordLoginSuccess(current.loginFailureState),
+        }),
+      });
+      return { ok: true };
     },
 
     async changeMasterPassword(newPassword) {

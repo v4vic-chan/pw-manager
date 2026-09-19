@@ -9,6 +9,7 @@ import { EntriesScreen } from "../../src/ui/entries/EntriesScreen";
 import { StorageError } from "../../src/services/storage";
 import { ALL_PASSWORDS, ENTRIES } from "./_shared/entriesFixtures";
 import { createFakeVault } from "./_shared/entriesFakes";
+import { createFakeSecurity } from "./_shared/securityFakes";
 
 /**
  * 模組：條目列表主畫面（React 元件，jsdom）
@@ -308,7 +309,9 @@ describe("App 整合：authenticated 時掛載主畫面", () => {
     });
     const storage = createStorage();
     const clipboard = createClipboard();
-    const view = render(<App controller={authController} storage={storage} clipboard={clipboard} />);
+    const view = render(
+      <App controller={authController} storage={{ ...storage, ...createFakeSecurity().storage }} clipboard={clipboard} />
+    );
     const user = userEvent.setup();
 
     async function login() {

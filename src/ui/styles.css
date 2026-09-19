@@ -67,11 +67,154 @@ body {
   opacity: 0.75;
 }
 
-/* 條目列表主畫面 */
+/* 已登入外框與分頁導覽 */
 
-body:has(.entries-page) {
+body:has(.entries-page),
+body:has(.app-shell) {
   place-items: start center;
 }
+
+.app-shell {
+  width: min(960px, calc(100vw - 32px));
+  padding-top: 16px;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-nav {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
+}
+
+.app-nav button {
+  font: inherit;
+  padding: 8px 16px;
+  border: none;
+  border-bottom: 3px solid transparent;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+.app-nav button[aria-current="page"] {
+  border-bottom-color: currentColor;
+  font-weight: 600;
+}
+
+.app-nav button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.app-shell .entries-page,
+.app-shell .security-page {
+  width: 100%;
+}
+
+/* 安全設定 */
+
+.security-page {
+  width: min(960px, calc(100vw - 32px));
+  padding: 24px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.security-page button {
+  font: inherit;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.security-page button:disabled {
+  cursor: not-allowed;
+}
+
+.security-section {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 16px;
+  border: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
+  border-radius: 12px;
+}
+
+.security-section h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.security-section p {
+  margin: 0;
+}
+
+.security-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.security-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-left: 4px solid #16a34a;
+  background: color-mix(in srgb, #16a34a 12%, transparent);
+}
+
+.modal h3 {
+  margin: 8px 0;
+  font-size: 1rem;
+}
+
+.totp-qr {
+  display: block;
+  margin: 8px auto;
+  background: #fff;
+  padding: 8px;
+}
+
+.totp-secret,
+.recovery-codes {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+.totp-secret {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, CanvasText 10%, transparent);
+  user-select: all;
+}
+
+.recovery-codes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 4px 16px;
+  margin: 8px 0;
+  padding-left: 2em;
+}
+
+.security-acknowledge {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.security-progress {
+  font-weight: 600;
+}
+
+/* 條目列表主畫面 */
 
 .entries-page {
   width: min(960px, calc(100vw - 32px));

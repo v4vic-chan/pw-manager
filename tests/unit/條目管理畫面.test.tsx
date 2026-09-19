@@ -16,6 +16,7 @@ import { StorageError } from "../../src/services/storage";
 import type { Entry } from "../../src/types/Entry";
 import { ALL_PASSWORDS, ENTRIES, UNCATEGORIZED_ID, WORK_ID } from "./_shared/entriesFixtures";
 import { createFakeVault, deferred } from "./_shared/entriesFakes";
+import { createFakeSecurity } from "./_shared/securityFakes";
 
 /**
  * 模組：條目與分類管理畫面（React 元件，jsdom）
@@ -573,7 +574,7 @@ describe("App 整合：session 失效後提示再自動登出", () => {
         ),
       },
     });
-    render(<App controller={authController} storage={vault.storage} />);
+    render(<App controller={authController} storage={{ ...vault.storage, ...createFakeSecurity().storage }} />);
 
     await user.type(await screen.findByLabelText("主密碼"), "correct horse battery staple");
     await user.click(screen.getByRole("button", { name: "解鎖" }));
