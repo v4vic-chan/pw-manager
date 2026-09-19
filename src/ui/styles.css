@@ -67,6 +67,162 @@ body {
   opacity: 0.75;
 }
 
+/* 條目列表主畫面 */
+
+body:has(.entries-page) {
+  place-items: start center;
+}
+
+.entries-page {
+  width: min(960px, calc(100vw - 32px));
+  padding: 24px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.entries-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.entries-header h1 {
+  margin: 0;
+  font-size: 1.4rem;
+}
+
+.entries-page button,
+.entries-page input,
+.entries-page select {
+  font: inherit;
+  padding: 6px 10px;
+}
+
+.entries-page button {
+  cursor: pointer;
+}
+
+.entries-page button:disabled {
+  cursor: not-allowed;
+}
+
+.entries-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  padding: 12px 16px;
+  border: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
+  border-radius: 12px;
+}
+
+.entries-field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.entries-field fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0;
+  padding: 4px 10px;
+  border: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
+  border-radius: 8px;
+}
+
+.entries-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.entries-count {
+  margin: 0;
+  opacity: 0.75;
+}
+
+.entries-empty {
+  padding: 24px;
+  text-align: center;
+  border: 1px dashed color-mix(in srgb, CanvasText 30%, transparent);
+  border-radius: 12px;
+}
+
+.entries-empty p {
+  margin: 0 0 12px;
+}
+
+.entries-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.entry-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 12px 16px;
+  border: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
+  border-radius: 12px;
+}
+
+/* 長 appName／accountId 需在容器內換行：flex 子項預設 min-width:auto 不會縮小，故設 min-width:0；
+   overflow-wrap:anywhere 會計入最小內容寬度，比 break-word 更適合 flex 排版 */
+.entry-main {
+  display: flex;
+  flex: 1 1 240px;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+
+.entry-main h2,
+.entry-account {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.entry-main h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.entry-category {
+  padding: 0 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, CanvasText 10%, transparent);
+  font-size: 0.85rem;
+}
+
+.entry-secret {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.entry-password {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+.entry-row > [role="status"],
+.entry-row > [role="alert"] {
+  flex-basis: 100%;
+}
+
 [role="alert"] {
   margin: 0;
   color: #dc2626;

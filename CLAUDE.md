@@ -56,5 +56,7 @@ React + TypeScript + Vite + Vitest + IndexedDB（`idb`）+ libsodium.js（Argon2
   會對該環境的 shell 呼叫完全不觸發（此點尚未在 WSL/CI 環境下實測過，僅為已知風險提醒）。
 
 ## Git 與 Context 治理
-- 每完成一個模組並通過對應 Gate（型態檢查 + 測試）後，執行一次原子化 commit。
+- 所有 git commit 一律由使用者**手動**進行，Claude **不得**自行執行 `git commit`（亦不得 push）。
+  每完成一個模組並通過對應 Gate（型態檢查 + 測試）後，Claude 只需在該時間點提醒使用者可進行一次原子化 commit，
+  並附上建議的 commit 範圍（變動檔案清單）與訊息草稿。
 - 完成一個獨立任務後執行 `/clear`，避免 context 累積影響後續任務精準度。

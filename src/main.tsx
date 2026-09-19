@@ -10,10 +10,10 @@ if (container === null) throw new Error("找不到 #root 容器");
 const root = createRoot(container);
 
 createApp({ activityTarget: window, visibilityTarget: document })
-  .then(({ controller }) =>
+  .then(({ controller, storage }) =>
     root.render(
       <StrictMode>
-        <App controller={controller} />
+        <App controller={controller} storage={storage} />
       </StrictMode>
     )
   )
